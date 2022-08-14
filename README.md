@@ -51,7 +51,7 @@ Python 2.7.5
 -bash: python3: command not found
 ```
 
-3. Устанавливаем свежую версию Python 3.6.8 из репозитория Epel
+3. Устанавливаем версию Python 3.6.8 из репозитория Epel
 
 ```bash 
 [sid@centos ~]$ sudo yum install epel-release
@@ -414,7 +414,7 @@ Complete!
 Python 3.6.8
 ```
 
-5. Создаем папку task В домашней директорий пользователя и заходим в неё.
+5. Создаем папку task в домашней директорий пользователя и заходим в неё.
 
 ```bash 
 [sid@centos ~]$ mkdir task
@@ -422,7 +422,7 @@ Python 3.6.8
 [sid@centos task]$
 ```
 
-6.  Создаем скрипт и тестируем его.
+6.  Создаем скрипт storage.py и тестируем его.
 
 ```bash
 [sid@centos task]$ vi storage.py
@@ -434,6 +434,10 @@ Python 3.6.8
 [sid@centos task]$ python3 storage.py --key key_name
 value, test_value, test_value2, test_value3
 ```
+
+Задача выполнена
+
+#### Все исходники по задачам хранятся в директории src !!!
 
 ## Задание 1.2 (усложненное)
 
@@ -491,6 +495,425 @@ curl -i -H "Content-Type: application/json" -X POST -d '{"test3": "value4"}' htt
 Будет плюсом использование Docker.
 
 ## Решение задания 2.1
+
+1. Для решения поставленной задачи с "плюсом" понадобится docker и docker-compose. 
+В качестве головной системы для удобства использовался ноут с десктопной версией Ubuntu 22.04.1 LTS
+
+```bash 
+root@sid-Easynote-TE69CX:/home/sid/r2.1# lsb_release -a
+No LSB modules are available.
+Distributor ID:	Ubuntu
+Description:	Ubuntu 22.04.1 LTS
+Release:	22.04
+Codename:	jammy
+root@sid-Easynote-TE69CX:/home/sid/r2.1# uname -r
+5.15.0-46-generic
+```
+
+2. Создадим файл Dockerfile. Используем alpine в качестве основного образа. 
+Он имеет небольшой размер и идеально подойдет под нашу задачу.
+
+```bash 
+FROM nginx:1.13.5-alpine
+
+RUN apk update && apk upgrade
+
+RUN apk add --no-cache bash curl ipvsadm iproute2 openrc keepalived && rm -f /var/cache/apk/* /tmp/*
+
+COPY entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh
+
+CMD ["/entrypoint.sh"]
+```
+
+3. Далее пишем файл docker-compose.yml, будем имитировать онлайн-среду, развертываем 2 хоста
+мастера и соответственно 2 зависимых хоста для репликации и балансировки, устанавливаем nginx
+
+```yaml
+version: "3"
+services:
+   nginx_master1:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./index-master1.html:/usr/share/nginx/html/index.html
+      - ./favicon.ico:/usr/share/nginx/html/favicon.ico
+      - ./keepalived-master1.conf:/etc/keepalived/keepalived.conf
+    networks:
+      static-network:
+        ipv4_address: 172.20.128.2
+    cap_add: 
+      - NET_ADMIN
+   nginx_slave1:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./index-slave1.html:/usr/share/nginx/html/index.html
+      - ./favicon.ico:/usr/share/nginx/html/favicon.ico
+      - ./keepalived-slave1.conf:/etc/keepalived/keepalived.conf
+    networks:
+      static-network:
+        ipv4_address: 172.20.128.3
+    cap_add: 
+        - NET_ADMIN
+   nginx_master2:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./index-master2.html:/usr/share/nginx/html/index.html
+      - ./favicon.ico:/usr/share/nginx/html/favicon.ico
+      - ./keepalived-master2.conf:/etc/keepalived/keepalived.conf
+    networks:
+      static-network:
+        ipv4_address: 172.20.127.2
+    cap_add: 
+      - NET_ADMIN
+   nginx_slave2:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./index-slave2.html:/usr/share/nginx/html/index.html
+      - ./favicon.ico:/usr/share/nginx/html/favicon.ico
+      - ./keepalived-slave2.conf:/etc/keepalived/keepalived.conf
+    networks:
+      static-network:
+        ipv4_address: 172.20.127.3
+    cap_add: 
+        - NET_ADMIN
+   proxy1:
+    image: haproxy:1.7-alpine
+    ports:
+      - 8000:6301
+    volumes:
+      - ./haproxy1.cfg:/usr/local/etc/haproxy/haproxy.cfg
+    networks:
+      - static-network
+   proxy2:
+    image: haproxy:1.7-alpine
+    ports:
+      - 8001:6301
+    volumes:
+      - ./haproxy2.cfg:/usr/local/etc/haproxy/haproxy.cfg
+    networks:
+      - static-network
+
+networks:
+  static-network:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+```
+
+4. Используем виртуальную прокси-службу для связи и работы наших контейнеров.
+Создаём 4 файла под нашу задачу: keepalived-master1.conf, keepalived-master2.conf
+keepalived-slave1.conf, keepalived-slave2.conf Для примера рассмотрим keepalived-master1.conf
+
+```bash 
+vrrp_script chk_nginx {
+    script "pidof nginx"
+    interval 2
+}
+
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 33
+    priority 200
+    advert_int 1
+    unicast_src_ip 172.20.128.2
+    unicast_peer {
+        172.20.128.3
+    }
+    
+    authentication {
+        auth_type PASS
+        auth_pass letmein
+    }
+    
+    virtual_ipaddress {
+        172.20.128.4/24 dev eth0
+    }
+
+    track_script {
+        chk_nginx
+    }
+}
+```
+
+5. Затем создаём четыре веб-страницы для внутренней службы, две для хост-index-master.html и две для подчиненных index-slave.html с необходимым текстом по заданию. Пример index-master1.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title> Hello Word! \n Server 1 </title>
+<style>
+
+#box{
+    margin: 0px auto;
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 30px;
+    font-style: initial;
+    color: aliceblue;
+    }
+
+body{
+    background-color: black
+}
+
+</style>
+</head>
+<body>
+
+    <div id="box">
+
+                 Hello Word! \n Server 1
+
+    </div>
+
+</body>
+</html>
+```
+
+6. Поскольку нам необходимо смоделировать фоновую службу, используем два файла конфигурации на каждый из хостов, пример haproxy1.cfg
+
+```bash 
+global
+    log 127.0.0.1 local0
+    maxconn 4096
+    daemon
+    nbproc 4
+
+defaults
+    log 127.0.0.1 local3
+    mode http
+    option dontlognull
+    option redispatch
+    retries 2
+    maxconn 2000
+    balance roundrobin
+    timeout connect 5000ms
+    timeout client 5000ms
+    timeout server 5000ms
+
+frontend main
+    bind *:6301
+    default_backend webserver
+
+backend webserver
+    server nginx_master1 172.20.128.4:80 check inter 2000 rise 2 fall 5
+```
+
+7. Сценарий служебной оболочки для entrypoint.sh
+
+```bash 
+#!/bin/sh
+
+/usr/sbin/keepalived -n -l -D -f /etc/keepalived/keepalived.conf --dont-fork --log-console &
+
+nginx -g "daemon off;"
+```
+
+8. Всё готово для запуска, запускаем кластер контейнеров
+
+```bash 
+root@sid-Easynote-TE69CX:/home/sid/r2.1# docker-compose up
+Creating network "r21_static-network" with the default driver
+Creating r21_nginx_master2_1 ... done
+Creating r21_proxy1_1        ... done
+Creating r21_nginx_slave2_1  ... done
+Creating r21_nginx_master1_1 ... done
+Creating r21_proxy2_1        ... done
+Creating r21_nginx_slave1_1  ... done
+Attaching to r21_nginx_master2_1, r21_nginx_master1_1, r21_proxy2_1, r21_nginx_slave1_1, r21_nginx_slave2_1, r21_proxy1_1
+nginx_master1_1  | Starting Keepalived v1.2.24 (11/19,2016), git commit v3.5.0_rc2-45-g813ce7d+
+nginx_master1_1  | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_master1_1  | Starting Healthcheck child process, pid=9
+nginx_master1_1  | Starting VRRP child process, pid=10
+nginx_master1_1  | Initializing ipvs
+nginx_master1_1  | Netlink reflector reports IP 172.20.128.2 added
+nginx_master1_1  | Registering Kernel netlink reflector
+nginx_master1_1  | Registering Kernel netlink command channel
+nginx_master1_1  | Registering gratuitous ARP shared channel
+nginx_master1_1  | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_master1_1  | VRRP_Instance(VI_1) removing protocol VIPs.
+nginx_master1_1  | Using LinkWatch kernel netlink reflector...
+nginx_master1_1  | VRRP sockpool: [ifindex(102), proto(112), unicast(1), fd(10,11)]
+nginx_master1_1  | Netlink reflector reports IP 172.20.128.2 added
+nginx_master1_1  | Registering Kernel netlink reflector
+nginx_master1_1  | Registering Kernel netlink command channel
+nginx_master1_1  | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_master1_1  | Using LinkWatch kernel netlink reflector...
+nginx_master1_1  | VRRP_Script(chk_nginx) succeeded
+nginx_master2_1  | Starting Keepalived v1.2.24 (11/19,2016), git commit v3.5.0_rc2-45-g813ce7d+
+nginx_master2_1  | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_master2_1  | Starting Healthcheck child process, pid=9
+nginx_master2_1  | Starting VRRP child process, pid=10
+nginx_master2_1  | Netlink reflector reports IP 172.20.127.2 added
+nginx_master2_1  | Registering Kernel netlink reflector
+nginx_master2_1  | Registering Kernel netlink command channel
+nginx_master2_1  | Registering gratuitous ARP shared channel
+nginx_master2_1  | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_master2_1  | VRRP_Instance(VI_1) removing protocol VIPs.
+nginx_master2_1  | Using LinkWatch kernel netlink reflector...
+nginx_master2_1  | VRRP sockpool: [ifindex(100), proto(112), unicast(1), fd(10,11)]
+nginx_master2_1  | Initializing ipvs
+nginx_master2_1  | Netlink reflector reports IP 172.20.127.2 added
+nginx_master2_1  | Registering Kernel netlink reflector
+nginx_master2_1  | Registering Kernel netlink command channel
+nginx_master2_1  | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_master2_1  | Using LinkWatch kernel netlink reflector...
+nginx_master2_1  | VRRP_Script(chk_nginx) succeeded
+nginx_slave1_1   | Starting Keepalived v1.2.24 (11/19,2016), git commit v3.5.0_rc2-45-g813ce7d+
+nginx_slave1_1   | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_slave1_1   | Starting Healthcheck child process, pid=8
+nginx_slave1_1   | Starting VRRP child process, pid=9
+nginx_slave2_1   | Starting Keepalived v1.2.24 (11/19,2016), git commit v3.5.0_rc2-45-g813ce7d+
+nginx_slave2_1   | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_slave2_1   | Starting Healthcheck child process, pid=9
+nginx_slave2_1   | Starting VRRP child process, pid=10
+nginx_slave2_1   | Initializing ipvs
+nginx_slave2_1   | Netlink reflector reports IP 172.20.127.3 added
+nginx_slave2_1   | Registering Kernel netlink reflector
+nginx_slave2_1   | Registering Kernel netlink command channel
+nginx_slave2_1   | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_slave2_1   | Using LinkWatch kernel netlink reflector...
+nginx_slave2_1   | Netlink reflector reports IP 172.20.127.3 added
+nginx_slave2_1   | Registering Kernel netlink reflector
+nginx_slave2_1   | Registering Kernel netlink command channel
+nginx_slave2_1   | Registering gratuitous ARP shared channel
+nginx_slave2_1   | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_slave2_1   | VRRP_Instance(VI_1) removing protocol VIPs.
+nginx_slave2_1   | Using LinkWatch kernel netlink reflector...
+nginx_slave2_1   | VRRP_Instance(VI_1) Entering BACKUP STATE
+nginx_slave2_1   | VRRP sockpool: [ifindex(104), proto(112), unicast(1), fd(10,11)]
+nginx_slave2_1   | VRRP_Script(chk_nginx) succeeded
+nginx_slave1_1   | Netlink reflector reports IP 172.20.128.3 added
+nginx_slave1_1   | Registering Kernel netlink reflector
+nginx_slave1_1   | Registering Kernel netlink command channel
+nginx_slave1_1   | Registering gratuitous ARP shared channel
+proxy1_1         | <7>haproxy-systemd-wrapper: executing /usr/local/sbin/haproxy -p /run/haproxy.pid -db -f /usr/local/etc/haproxy/haproxy.cfg -Ds 
+nginx_slave1_1   | Initializing ipvs
+nginx_slave1_1   | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_slave1_1   | VRRP_Instance(VI_1) removing protocol VIPs.
+nginx_slave1_1   | Using LinkWatch kernel netlink reflector...
+nginx_slave1_1   | Netlink reflector reports IP 172.20.128.3 added
+nginx_slave1_1   | VRRP_Instance(VI_1) Entering BACKUP STATE
+nginx_slave1_1   | VRRP sockpool: [ifindex(106), proto(112), unicast(1), fd(10,11)]
+nginx_slave1_1   | Registering Kernel netlink reflector
+nginx_slave1_1   | Registering Kernel netlink command channel
+nginx_slave1_1   | Opening file '/etc/keepalived/keepalived.conf'.
+nginx_slave1_1   | Using LinkWatch kernel netlink reflector...
+nginx_slave1_1   | VRRP_Script(chk_nginx) succeeded
+proxy2_1         | <7>haproxy-systemd-wrapper: executing /usr/local/sbin/haproxy -p /run/haproxy.pid -db -f /usr/local/etc/haproxy/haproxy.cfg -Ds 
+nginx_master2_1  | VRRP_Instance(VI_1) Transition to MASTER STATE
+nginx_master1_1  | VRRP_Instance(VI_1) Transition to MASTER STATE
+nginx_master2_1  | VRRP_Instance(VI_1) Entering MASTER STATE
+nginx_master2_1  | VRRP_Instance(VI_1) setting protocol VIPs.
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master2_1  | Netlink reflector reports IP 172.20.127.4 added
+nginx_master2_1  | VRRP_Instance(VI_1) Sending/queueing gratuitous ARPs on eth0 for 172.20.127.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master1_1  | VRRP_Instance(VI_1) Entering MASTER STATE
+nginx_master1_1  | VRRP_Instance(VI_1) setting protocol VIPs.
+nginx_master1_1  | Netlink reflector reports IP 172.20.128.4 added
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master1_1  | VRRP_Instance(VI_1) Sending/queueing gratuitous ARPs on eth0 for 172.20.128.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master2_1  | VRRP_Instance(VI_1) Sending/queueing gratuitous ARPs on eth0 for 172.20.127.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master2_1  | Sending gratuitous ARP on eth0 for 172.20.127.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master1_1  | VRRP_Instance(VI_1) Sending/queueing gratuitous ARPs on eth0 for 172.20.128.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+nginx_master1_1  | Sending gratuitous ARP on eth0 for 172.20.128.4
+```
+
+9. Проверяем доступность в браузере и выключаем кластер
+
+![img8](img/img7.png)
+
+![img8](img/img8.png)
+
+```bash
+[loadbalancers]
+nginx_master1_1  | 172.20.0.3 - - [14/Aug/2022:15:39:16 +0000] "GET / HTTP/1.1" 304 0 "-" "Mozilla/5.0 (X11; Linux x86_64; rv:103.0) Gecko/20100101 Firefox/103.0" "-"
+nginx_master2_1  | 172.20.0.2 - - [14/Aug/2022:15:39:18 +0000] "GET / HTTP/1.1" 304 0 "-" "Mozilla/5.0 (X11; Linux x86_64; rv:103.0) Gecko/20100101 Firefox/103.0" "-"
+^CGracefully stopping... (press Ctrl+C again to force)
+Stopping r21_nginx_master1_1 ... done
+Stopping r21_nginx_slave1_1  ... done
+Stopping r21_proxy2_1        ... done
+Stopping r21_nginx_master2_1 ... done
+Stopping r21_nginx_slave2_1  ... done
+Stopping r21_proxy1_1        ... done
+
+root@sid-Easynote-TE69CX:/home/sid/r2.1# docker-compose down
+Removing r21_nginx_master1_1 ... done
+Removing r21_nginx_slave1_1  ... done
+Removing r21_proxy2_1        ... done
+Removing r21_nginx_master2_1 ... done
+Removing r21_nginx_slave2_1  ... done
+Removing r21_proxy1_1        ... done
+Removing network r21_static-network
+```
+
+10. Запустим контейнерную среду в фоновом режиме
+
+```bash
+root@sid-Easynote-TE69CX:/home/sid/r2.1# docker-compose up -d
+Creating network "r21_static-network" with the default driver
+Creating r21_nginx_slave1_1  ... done
+Creating r21_proxy2_1        ... done
+Creating r21_nginx_master1_1 ... done
+Creating r21_proxy1_1        ... done
+Creating r21_nginx_master2_1 ... done
+Creating r21_nginx_slave2_1  ... done
+```
+
+11. Так выглядит список всех докер контейнеров в системе
+
+```bash
+root@sid-Easynote-TE69CX:/home/sid/r2.1# docker ps
+CONTAINER ID   IMAGE                COMMAND                  CREATED         STATUS         PORTS                                       NAMES
+671bd2bd4468   r21_nginx_slave2     "/entrypoint.sh"         5 minutes ago   Up 5 minutes   80/tcp                                      r21_nginx_slave2_1
+5354f573098b   haproxy:1.7-alpine   "docker-entrypoint.s…"   5 minutes ago   Up 5 minutes   0.0.0.0:8000->6301/tcp, :::8000->6301/tcp   r21_proxy1_1
+aed11a843e42   r21_nginx_master2    "/entrypoint.sh"         5 minutes ago   Up 5 minutes   80/tcp                                      r21_nginx_master2_1
+6c8bfdbd493d   r21_nginx_master1    "/entrypoint.sh"         5 minutes ago   Up 5 minutes   80/tcp                                      r21_nginx_master1_1
+c6cb2613e7ad   haproxy:1.7-alpine   "docker-entrypoint.s…"   5 minutes ago   Up 5 minutes   0.0.0.0:8001->6301/tcp, :::8001->6301/tcp   r21_proxy2_1
+0ec7fd1f1417   r21_nginx_slave1     "/entrypoint.sh"         5 minutes ago   Up 5 minutes   80/tcp                                      r21_nginx_slave1_1
+```
+
+12. Теперь имитируем ситуацию, когда один из хостов nginx упал, остановим r21_nginx_master1 
+
+```bash
+root@sid-Easynote-TE69CX:/home/sid/r2.1# docker pause 6c8bfdbd493d
+6c8bfdbd493d
+```
+
+Сервер доступен
+
+![img8](img/img8.png)
+
+Задача выполнена
 
 ## Задание 2.2 (усложненное)
 

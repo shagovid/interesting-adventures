@@ -1,0 +1,77 @@
+version: "3"
+services:
+   nginx_master1:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./index-master1.html:/usr/share/nginx/html/index.html
+      - ./favicon.ico:/usr/share/nginx/html/favicon.ico
+      - ./keepalived-master1.conf:/etc/keepalived/keepalived.conf
+    networks:
+      static-network:
+        ipv4_address: 172.20.128.2
+    cap_add: 
+      - NET_ADMIN
+   nginx_slave1:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./index-slave1.html:/usr/share/nginx/html/index.html
+      - ./favicon.ico:/usr/share/nginx/html/favicon.ico
+      - ./keepalived-slave1.conf:/etc/keepalived/keepalived.conf
+    networks:
+      static-network:
+        ipv4_address: 172.20.128.3
+    cap_add: 
+        - NET_ADMIN
+   nginx_master2:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./index-master2.html:/usr/share/nginx/html/index.html
+      - ./favicon.ico:/usr/share/nginx/html/favicon.ico
+      - ./keepalived-master2.conf:/etc/keepalived/keepalived.conf
+    networks:
+      static-network:
+        ipv4_address: 172.20.127.2
+    cap_add: 
+      - NET_ADMIN
+   nginx_slave2:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./index-slave2.html:/usr/share/nginx/html/index.html
+      - ./favicon.ico:/usr/share/nginx/html/favicon.ico
+      - ./keepalived-slave2.conf:/etc/keepalived/keepalived.conf
+    networks:
+      static-network:
+        ipv4_address: 172.20.127.3
+    cap_add: 
+        - NET_ADMIN
+   proxy1:
+    image: haproxy:1.7-alpine
+    ports:
+      - 8000:6301
+    volumes:
+      - ./haproxy1.cfg:/usr/local/etc/haproxy/haproxy.cfg
+    networks:
+      - static-network
+   proxy2:
+    image: haproxy:1.7-alpine
+    ports:
+      - 8001:6301
+    volumes:
+      - ./haproxy2.cfg:/usr/local/etc/haproxy/haproxy.cfg
+    networks:
+      - static-network
+
+networks:
+  static-network:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
