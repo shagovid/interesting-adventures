@@ -123,11 +123,32 @@ Complete!
 
 </details>
 
-3. Запустим firewalld и добавим в авто загрузку при старте ОС.
+#### При работе ssh через порт 2235 необходимо перед стартом firewalld настроить его, иначе грозит потери доступа!!!
+
+3. Запустим firewalld и добавим в автозагрузку при старте ОС.
 
 ```bash
 [root@sh-centos7cs ~]# systemctl enable firewalld.service
 [root@sh-centos7cs ~]# systemctl start firewalld.service
+```
+
+4. Проверим статус сервиса firewalld.
+
+```bash
+[root@sh-centos7cs2 sid]# systemctl status firewalld
+
+● firewalld.service - firewalld - dynamic firewall daemon
+   Loaded: loaded (/usr/lib/systemd/system/firewalld.service; enabled; vendor preset: enabled)
+   Active: active (running) since Mon 2022-09-05 18:37:58 UTC; 1min 5s ago
+     Docs: man:firewalld(1)
+ Main PID: 7832 (firewalld)
+   CGroup: /system.slice/firewalld.service
+           └─7832 /usr/bin/python2 -Es /usr/sbin/firewalld --nofork --nopid
+
+Sep 05 18:37:57 sh-centos7cs2.ru-central1.internal systemd[1]: Starting firew...
+Sep 05 18:37:58 sh-centos7cs2.ru-central1.internal systemd[1]: Started firewa...
+Sep 05 18:37:58 sh-centos7cs2.ru-central1.internal firewalld[7832]: WARNING: ...
+Hint: Some lines were ellipsized, use -l to show in full.
 ```
 
 ## Задание 1.1
@@ -172,11 +193,36 @@ Saving to: ‘install-RedHat.sh’
 2022-09-05 19:50:24 (499 MB/s) - ‘install-RedHat.sh’ saved [3210/3210]
 ```
 
-4. 
+4. Установим все компоненты и модули Р7-Офис. Сервер. Профессиональный
+Требуется более 40Гб свободного места на диске!
+При установке одному скрипту понадобилась версия Python 3.7 и выше!
 
 ```bash 
+[root@sh-centos7cs2 sid]# bash install-RedHat.sh
 
+................................................
+
+Trying to establish MySQL connection... OK
+Restarting services...
+r7-officeJabber.service
+OK
+6144+0 records in
+6144+0 records out
+6442450944 bytes (6.4 GB) copied, 54.754 s, 118 MB/s
+Setting up swapspace version 1, size = 6291452 KiB
+no label, UUID=3122a50b-070c-4c17-8b75-5255ba2cfdb2
+firewalld-0.6.3-13.el7_9.noarch
+success
+success
+
+Спасибо за инсталляцию Р7-Офис. Сервер
+Вы можете сконфигурировать ваш портал используя Р7-Офис. Панель управления.
+Если у вас есть какие-либо вопросы вы можете связаться с нами через http://wwww.r7-office.ru
 ```
+
+5. Проверим работу Р7-Офис через браузер
+
+![img1](img/img1.png)
 
 ---
 
