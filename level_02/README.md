@@ -123,7 +123,7 @@ Complete!
 
 </details>
 
-#### При работе ssh через порт 2235 необходимо перед стартом firewalld настроить его, иначе грозит потери доступа!!!
+#### При работе ssh через порт 2235 необходимо перед стартом firewalld настроить его, иначе грозит потерей доступа!!!
 
 3. Запустим firewalld и добавим в автозагрузку при старте ОС.
 
@@ -228,17 +228,178 @@ success
 
 ## Задание 1.2
 
-Добавить и настроить nginx в качестве реверс прокси.
+Перевести портал на https, добавив самоподписной сертификат. 
 
 ## Решение задания 1.2
+
+1.  Создадим сертификат, подписанный Центром Сертификации letsencrypt и переключим портал на протокол HTTPS
+
+```bash 
+[root@sh-centos7cs2 sid]# bash /var/www/r7-office/Tools/letsencrypt.sh kuberwars.online
+Saving debug log to /var/log/letsencrypt/letsencrypt.log
+Account registered.
+Requesting a certificate for kuberwars.online
+
+Successfully received certificate.
+Certificate is saved at: /etc/letsencrypt/live/kuberwars.online/fullchain.pem
+Key is saved at:         /etc/letsencrypt/live/kuberwars.online/privkey.pem
+This certificate expires on 2022-12-05.
+These files will be updated when the certificate renews.
+Certbot has set up a scheduled task to automatically renew this certificate in the background.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+If you like Certbot, please consider supporting our work by:
+ * Donating to ISRG / Let's Encrypt:   https://letsencrypt.org/donate
+ * Donating to EFF:                    https://eff.org/donate-le
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Generating DH parameters, 2048 bit long safe prime, generator 2
+This is going to take a long time
+.........................+.........+.................................++*++*
+```
+
+2. Проверим сертификат для сервера Р7-Офис через браузер
+
+![img2](img/img2.png)
 
 ---
 
 ## Задание 1.3
 
-Перевести портал на https, добавив самоподписной сертификат.
+Добавить и настроить nginx в качестве реверс прокси.
 
 ## Решение задания 1.3
+
+1. Похоже что реверс прокси сконфигурирован из коробки
+
+<details> 
+  <summary>root@sh-centos7cs2 conf.d]# cat /etc/nginx/conf.d/r7-office.conf </summary>
+
+```bash 
+root@sh-centos7cs2 conf.d]# cat /etc/nginx/conf.d/r7-office.conf
+upstream fastcgi_backend_apisystem {
+        server unix:/var/run/r7-office/r7-officeApiSystem.socket;
+        keepalive 32;
+}
+
+upstream fastcgi_backend {
+        server unix:/var/run/r7-office/r7-office.socket;
+        keepalive 64;
+}
+
+fastcgi_cache_path /var/cache/nginx/r7-office
+        levels=1:2
+        keys_zone=r7-office:256m
+        max_size=1024m
+        inactive=1d;
+
+geo $ip_external {
+     default 1;
+     127.0.0.1 0;
+}
+
+map $http_host $this_host {
+  "" $host;
+  default $http_host;
+}
+
+map $http_x_forwarded_proto $the_scheme {
+  default $http_x_forwarded_proto;
+  "" $scheme;
+}
+
+map $http_x_forwarded_host $the_host {
+  default $http_x_forwarded_host;
+  "" $this_host;
+}
+
+map $request_uri $header_access_control_allow_origin {
+  ~*^/(api\/2.0|products\/crm\/httphandlers\/webtoleadfromhandler.ashx|products\/files\/httphandlers\/filehandler.ashx|products\/files\/chunkeduploader.ashx|thirdparty\/plugin) "*";
+  default "";
+}
+
+map $request_uri $header_x_frame_options {
+  ~*^/(favicon\.ico|products\/files\/share\.aspx|products\/files\/saveas\.aspx|products\/files\/filechoice\.aspx|products\/files\/doceditor\.aspx|thirdparty\/plugin) "";
+  default "SAMEORIGIN";
+}
+
+server {
+        listen 0.0.0.0:80 default_server;
+        listen [::]:80;
+
+        server_name _;
+        server_tokens off;
+
+        root /nowhere; ## root doesn't have to be a valid path since we are redirecting
+
+        location / {
+                if ($ip_external) {
+                                ## Redirects all traffic to the HTTPS host
+                                 rewrite ^ https://$host$request_uri? permanent;
+                        }
+
+                        client_max_body_size 100m;
+
+                        proxy_pass https://127.0.0.1;
+                        proxy_http_version 1.1;
+                        proxy_set_header Upgrade $http_upgrade;
+                        proxy_set_header Connection "upgrade";
+                        proxy_set_header Host $host;
+                        proxy_set_header X-Real-IP $remote_addr;
+                        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                        proxy_set_header X-Forwarded-Host $server_name;
+                        proxy_set_header X-Forwarded-Proto $scheme;
+                        proxy_ssl_verify off;
+        }
+}
+
+server {
+        listen 0.0.0.0:443 ssl http2;
+        listen [::]:443 ssl http2 default_server;
+
+        charset utf-8;
+
+        server_tokens off;
+
+        ## Increase this if you want to upload large attachments
+        client_max_body_size 100m;
+
+        ssl_certificate /var/www/r7-office/Data/certs/r7-office.crt;
+        ssl_certificate_key /var/www/r7-office/Data/certs/r7-office.key;
+        ssl_verify_client off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:MozSSL:10m;  # about 40000 sessions
+    ssl_session_tickets off;
+
+        ssl_protocols TLSv1.2;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+        ssl_prefer_server_ciphers off;
+
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    add_header X-Frame-Options $header_x_frame_options;
+        add_header X-Content-Type-Options nosniff;
+        add_header Access-Control-Allow-Origin $header_access_control_allow_origin;
+
+        ssl_stapling on;
+        ssl_stapling_verify on;
+        ssl_trusted_certificate /var/www/r7-office/Data/certs/stapling.trusted.crt;
+        resolver 8.8.8.8 8.8.4.4 127.0.0.11 valid=300s; # Can change to your DNS resolver if desired
+        resolver_timeout 10s;
+
+        ssl_dhparam /var/www/r7-office/Data/certs/dhparam.pem;
+
+        large_client_header_buffers 4 16k;
+
+        set $X_REWRITER_URL $the_scheme://$the_host;
+
+        if ($http_x_rewriter_url != '') {
+                set $X_REWRITER_URL $http_x_rewriter_url ;
+        }
+
+    include /etc/nginx/includes/r7-office-communityserver-*.conf;
+}
+```
+
+</details>
 
 ---
 
@@ -248,11 +409,18 @@ success
 
 ## Решение задания 1.4
 
+1. Вносим правки в my.cnf на основном сервере. 
+
+```bash
+[root@sh-centos7cs2 ~]# sudo vi /etc/my.cnf
+```
+
 ---
 
 ### Ссылки
 
 1. Ссылка на установку серверной версии Р7-Офис. Сервер. Профессиональный с помощью скрипта для CentOS: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650839521948-_25D0_25A3_25D1_2581_25D1_2582_25D0_25B0_25D0_25BD_25D0_25BE_25D0_25B2_25D0_25BA_25D0_0C83026324.html              
-2. Ссылка на переключение Р7-Офис. Сервер. Профессиональный на протокол HTTPS с помощью собственного сертификата?: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650866011804-_25D0_259A_25D0_25B0_25D0_25BA-_25D0_25BF_25D0_25B5_25D1_2580_25D0_25B5_25D0_25BA_25D001E0E1DD9D.html        
+2. Ссылка на переключение Р7-Офис. Сервер. Профессиональный на протокол HTTPS с помощью собственного сертификата: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650866011804-_25D0_259A_25D0_25B0_25D0_25BA-_25D0_25BF_25D0_25B5_25D1_2580_25D0_25B5_25D0_25BA_25D001E0E1DD9D.html        
+3. Ссылка на переход на HTTPS с помощью скрипта: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650840176028/default.htm
 
 ---
