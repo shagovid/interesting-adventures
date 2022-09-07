@@ -124,6 +124,8 @@ Complete!
 </details>
 
 #### При работе ssh через порт 2235 необходимо перед стартом firewalld настроить его, иначе грозит потерей доступа!!!
+#### [root@sh-centos7cs ~]# firewall-cmd --add-port=2235/tcp FirewallD is not running
+#### При не запущенном firewalld это сделать нельзя!!!!
 
 3. Запустим firewalld и добавим в автозагрузку при старте ОС.
 
@@ -409,10 +411,287 @@ server {
 
 ## Решение задания 1.4
 
-1. Вносим правки в my.cnf на основном сервере. 
+1. Вносим правки в my.cnf на основном сервере.  
 
 ```bash
 [root@sh-centos7cs2 ~]# sudo vi /etc/my.cnf
+[root@sh-centos7cs2 sid]# cat /etc/my.cnf
+# For advice on how to change settings please see
+# http://dev.mysql.com/doc/refman/8.0/en/server-configuration-defaults.html
+
+[mysqld]
+default-authentication-plugin = mysql_native_password
+collation_server = utf8_general_ci
+character_set_server = utf8
+max_allowed_packet = 1048576000
+group_concat_max_len = 2048
+max_connections = 1000
+sql_mode = 'NO_ENGINE_SUBSTITUTION'
+#
+# Remove leading # and set to the amount of RAM for the most important data
+# cache in MySQL. Start at 70% of total RAM for dedicated server, else 10%.
+# innodb_buffer_pool_size = 128M
+#
+# Remove the leading "# " to disable binary logging
+# Binary logging captures changes between backups and is enabled by
+# default. It's default setting is log_bin=binlog
+# disable_log_bin
+#
+# Remove leading # to set options mainly useful for reporting servers.
+# The server defaults are faster for transactions and fast SELECTs.
+# Adjust sizes as needed, experiment to find the optimal values.
+# join_buffer_size = 128M
+# sort_buffer_size = 2M
+# read_rnd_buffer_size = 2M
+#
+# Remove leading # to revert to previous value for default_authentication_plugin,
+# this will increase compatibility with older clients. For background, see:
+# https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_default_authentication_plugin
+# default-authentication-plugin=mysql_native_password
+
+datadir=/var/lib/mysql
+socket=/var/lib/mysql/mysql.sock
+
+log-error=/var/log/mysqld.log
+pid-file=/var/run/mysqld/mysqld.pid
+
+# выбираем ID сервера, произвольное число, лучше начинать с 1
+server-id = 1
+# название базы данных, которая будет реплицироваться
+binlog_do_db = r7-office
+```
+
+2. Перезапускаем Mysql.  
+
+```bash
+[root@sh-centos7cs2 sid]# sudo systemctl restart mysqld
+```
+
+3. Авторизуемся в mysql (root ei7veeChu4bo!) и посмотрим список баз на основном сервере. 
+
+```bash
+[root@sh-centos7cs2 sid]# mysql -u root -p
+mysql> SHOW DATABASES;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| r7-office          |
+| sys                |
++--------------------+
+5 rows in set (0.01 sec)
+```
+
+4. Cоздадим на основном сервере учетную запись (slave_user), от имени которой будет работать репликация 
+
+```bash
+mysql> CREATE USER 'slave_user'@'45.94.123.5' IDENTIFIED BY 'ei7veeChu4bo!';
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> GRANT replication slave ON *.* TO 'slave_user'@'45.94.123.5';
+Query OK, 0 rows affected (0.00 sec)
+```
+
+5. Блокируем все таблицы в нашей базе данных. 
+
+```bash
+mysql> FLUSH TABLES WITH READ LOCK;
+Query OK, 0 rows affected (0.00 sec)
+```
+
+6. Cделаем дамп базы данных r7-office на основном сервере.  
+
+```bash
+[root@sh-centos7cs2 sid]# mysqldump -u root -p r7-office > r7-office.sql
+
+[root@sh-centos7cs2 sid]# ls
+install-RedHat.sh  r7-office.sql
+```
+
+7. Проверяем автоустановленную версию MySQL на основном сервере.  
+
+```bash
+[root@sh-centos7cs2 sid]# mysql -V
+mysql  Ver 8.0.30 for Linux on x86_64 (MySQL Community Server - GPL)
+```
+
+8. Проверяем и удаляем MariaDB на сервере для репликации БД.  
+
+```bash
+[root@sh-mysqlforcentos7cs ~]# rpm -qa | grep mariadb
+mariadb-libs-5.5.68-1.el7.x86_64
+
+[root@sh-mysqlforcentos7cs ~]# rpm -e --nodeps mariadb-libs-5.5.68-1.el7.x86_64
+```
+
+9. Скачаем mysql сервер 8.0.30 на сервер для репликации БД.  
+
+```bash
+[root@sh-mysqlforcentos7cs ~]# wget https://dev.mysql.com/get/mysql80-community-release-el7-7.noarch.rpm
+
+100%[======================================>] 11,196      --.-K/s   in 0s
+
+2022-09-07 20:53:11 (185 MB/s) - ‘mysql80-community-release-el7-7.noarch.rpm’ saved [11196/11196]
+```
+
+10. Добавим репозиторий MySQL Yum в список хранилищ системы.  
+
+```bash
+[root@sh-mysqlforcentos7cs ~]# yum localinstall mysql80-community-release-el7-7.noarch.rpm
+Loaded plugins: fastestmirror
+Examining mysql80-community-release-el7-7.noarch.rpm: mysql80-community-release-el7-7.noarch
+Marking mysql80-community-release-el7-7.noarch.rpm to be installed
+Resolving Dependencies
+--> Running transaction check
+---> Package mysql80-community-release.noarch 0:el7-7 will be installed
+--> Finished Dependency Resolution
+
+Dependencies Resolved
+
+================================================================================
+ Package             Arch   Version
+                                  Repository                               Size
+================================================================================
+Installing:
+ mysql80-community-release
+                     noarch el7-7 /mysql80-community-release-el7-7.noarch  10 k
+
+Transaction Summary
+================================================================================
+Install  1 Package
+
+Total size: 10 k
+Installed size: 10 k
+Is this ok [y/d/N]: y
+Downloading packages:
+Running transaction check
+Running transaction test
+Transaction test succeeded
+Running transaction
+Warning: RPMDB altered outside of yum.
+** Found 2 pre-existing rpmdb problem(s), 'yum check' output follows:
+2:postfix-2.10.1-9.el7.x86_64 has missing requires of libmysqlclient.so.18()(64bit)
+2:postfix-2.10.1-9.el7.x86_64 has missing requires of libmysqlclient.so.18(libmysqlclient_18)(64bit)
+  Installing : mysql80-community-release-el7-7.noarch                       1/1
+  Verifying  : mysql80-community-release-el7-7.noarch                       1/1
+
+Installed:
+  mysql80-community-release.noarch 0:el7-7
+
+Complete!
+```
+
+11. Проверим, успешно ли добавлен репозиторий MySQL Yum.  
+
+```bash
+[root@sh-mysqlforcentos7cs ~]# yum repolist enabled | grep "mysql.*-community.*"
+mysql-connectors-community/x86_64       MySQL Connectors Community           199
+mysql-tools-community/x86_64            MySQL Tools Community                 92
+mysql80-community/x86_64                MySQL 8.0 Community Server           346
+```
+
+12. Установим сервер MySQL.  
+
+```bash
+[root@sh-mysqlforcentos7cs ~]# yum install mysql-community-server
+.................................................................
+Installed:
+  mysql-community-server.x86_64 0:8.0.30-1.el7
+
+Dependency Installed:
+  mysql-community-client.x86_64 0:8.0.30-1.el7
+  mysql-community-client-plugins.x86_64 0:8.0.30-1.el7
+  mysql-community-common.x86_64 0:8.0.30-1.el7
+  mysql-community-icu-data-files.x86_64 0:8.0.30-1.el7
+  mysql-community-libs.x86_64 0:8.0.30-1.el7
+
+Complete!
+```
+
+13. Запустим сервер MySQL и проверим состояние.  
+
+```bash
+[root@sh-mysqlforcentos7cs ~]# service mysqld start
+Redirecting to /bin/systemctl start mysqld.service
+[root@sh-mysqlforcentos7cs ~]# service mysqld status
+Redirecting to /bin/systemctl status mysqld.service
+● mysqld.service - MySQL Server
+   Loaded: loaded (/usr/lib/systemd/system/mysqld.service; enabled; vendor preset: disabled)
+   Active: active (running) since Wed 2022-09-07 21:02:34 MSK; 19s ago
+     Docs: man:mysqld(8)
+           http://dev.mysql.com/doc/refman/en/using-systemd.html
+  Process: 4136 ExecStartPre=/usr/bin/mysqld_pre_systemd (code=exited, status=0/SUCCESS)
+ Main PID: 4215 (mysqld)
+   Status: "Server is operational"
+   CGroup: /system.slice/mysqld.service
+           └─4215 /usr/sbin/mysqld
+
+Sep 07 21:02:25 sh-mysqlforcentos7cs systemd[1]: Starting MySQL Server...
+Sep 07 21:02:34 sh-mysqlforcentos7cs systemd[1]: Started MySQL Server.
+```
+
+14. Посмотрим пароль root на сервере MySQL.  
+
+```bash
+[root@sh-mysqlforcentos7cs ~]# grep 'temporary password' /var/log/mysqld.log
+2022-09-07T18:02:29.847731Z 6 [Note] [MY-010454] [Server] A temporary password is generated for root@localhost: Fgt=Z2cqgaEd
+```
+
+15. Сменим пароль root на сервере MySQL.    
+
+```bash
+mysql> ALTER USER 'root'@'localhost' IDENTIFIED  BY 'ei7veeChu4bo!';
+Query OK, 0 rows affected (0.01 sec)
+```
+
+16. Создаем базу r7-office.  
+
+```bash
+mysql> create database `r7-office`;
+Query OK, 1 row affected (0.01 sec)
+```
+
+17. Пересылаем файл с дампом БД с основного сервера на побочный.  
+
+```bash
+[root@sh-centos7cs2 sid]# scp -P 2235 r7-office.sql root@45.94.123.5:/r7-office.sql
+```
+
+18. После этого загружаем дамп на побочном сервере.  
+
+```bash
+[root@sh-mysqlforcentos7cs /]# mysql -u root -p r7-office < r7-office.sql
+```
+
+19. Вносим правки в my.cnf на побочном сервере.  
+
+```bash
+[root@sh-mysqlforcentos7cs /]# cat /etc/my.cnf
+[mysqld]
+
+...........................................................
+
+datadir=/var/lib/mysql
+socket=/var/lib/mysql/mysql.sock
+
+log-error=/var/log/mysqld.log
+pid-file=/var/run/mysqld/mysqld.pid
+
+# ID Слейва, удобно выбирать следующим числом после Мастера
+server-id = 2
+# Путь к relay логу
+relay-log = /var/log/mysql/mysql-relay-bin.log
+# База данных для репликации
+binlog_do_db = r7-office
+```
+
+20. Включаем репликацию, для этого необходимо указать параметры подключения к мастеру  
+
+```bash
+[root@sh-mysqlforcentos7cs /]# mysql -u root -p
+
 ```
 
 ---
@@ -421,6 +700,8 @@ server {
 
 1. Ссылка на установку серверной версии Р7-Офис. Сервер. Профессиональный с помощью скрипта для CentOS: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650839521948-_25D0_25A3_25D1_2581_25D1_2582_25D0_25B0_25D0_25BD_25D0_25BE_25D0_25B2_25D0_25BA_25D0_0C83026324.html              
 2. Ссылка на переключение Р7-Офис. Сервер. Профессиональный на протокол HTTPS с помощью собственного сертификата: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650866011804-_25D0_259A_25D0_25B0_25D0_25BA-_25D0_25BF_25D0_25B5_25D1_2580_25D0_25B5_25D0_25BA_25D001E0E1DD9D.html        
-3. Ссылка на переход на HTTPS с помощью скрипта: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650840176028/default.htm
+3. Ссылка на переход на HTTPS с помощью скрипта: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650840176028/default.html
+4. Пользователь для репликации в mysql https://dev.mysql.com/doc/refman/8.0/en/replication-howto-repuser.html
+
 
 ---
