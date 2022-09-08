@@ -123,9 +123,10 @@ Complete!
 
 </details>
 
-#### При работе ssh через порт 2235 необходимо перед стартом firewalld настроить его, иначе грозит потерей доступа!!!
+#### При работе ssh через порт 2235 необходимо перед стартом firewalld перевести ssh на 22 порт
+#### Запустить firewalld, добавить исключение, потом перевести обратно, иначе грозит потерей доступа!!!
 #### [root@sh-centos7cs ~]# firewall-cmd --add-port=2235/tcp FirewallD is not running
-#### При не запущенном firewalld это сделать нельзя!!!!
+#### При не запущенном firewalld это сделать нельзя!!!
 
 3. Запустим firewalld и добавим в автозагрузку при старте ОС.
 
@@ -134,7 +135,16 @@ Complete!
 [root@sh-centos7cs ~]# systemctl start firewalld.service
 ```
 
-4. Проверим статус сервиса firewalld.
+4. На мастере разрешим подключаться к серверу по tcp порту 3306, на котором работает mysql сервер + 2235 ssh
+
+```bash
+[root@sh-centos7cs2 sid]# firewall-cmd --permanent --add-port=3306/tcp
+success
+[root@sh-centos7cs2 sid]# firewall-cmd --permanent --add-port=2235/tcp
+success
+```
+
+5. Проверим статус сервиса firewalld.
 
 ```bash
 [root@sh-centos7cs2 sid]# systemctl status firewalld
@@ -457,6 +467,8 @@ pid-file=/var/run/mysqld/mysqld.pid
 
 # выбираем ID сервера, произвольное число, лучше начинать с 1
 server-id = 1
+# путь к бинарному логу
+log_bin = /var/log/mysql/mysql-bin.log
 # название базы данных, которая будет реплицироваться
 binlog_do_db = r7-office
 ```
@@ -679,19 +691,127 @@ socket=/var/lib/mysql/mysql.sock
 log-error=/var/log/mysqld.log
 pid-file=/var/run/mysqld/mysqld.pid
 
-# ID Слейва, удобно выбирать следующим числом после Мастера
+max_allowed_packet = 1048576000
+
+# ID Слейва
 server-id = 2
 # Путь к relay логу
 relay-log = /var/log/mysql/mysql-relay-bin.log
 # База данных для репликации
 binlog_do_db = r7-office
+# Путь к bin логу на Мастере
+log_bin = /var/log/mysql/mysql-bin.log
 ```
 
-20. Включаем репликацию, для этого необходимо указать параметры подключения к мастеру  
+20. Запускаем репликацию. Для этого идем на мастер и смотрим master log position в консоли mysql.  
 
 ```bash
-[root@sh-mysqlforcentos7cs /]# mysql -u root -p
+[root@sh-centos7cs2 sid]# mysql -u root -p
+Enter password:
+..................................................................................
+mysql> show master status;
++---------------+----------+--------------+------------------+-------------------+
+| File          | Position | Binlog_Do_DB | Binlog_Ignore_DB | Executed_Gtid_Set |
++---------------+----------+--------------+------------------+-------------------+
+| binlog.000002 |      157 | r7-office    |                  |                   |
++---------------+----------+--------------+------------------+-------------------+
+1 row in set (0.00 sec)
+```
 
+21. Создаем папки с логами на слейве и правим права.  
+
+```bash
+[root@sh-mysqlforcentos7cs ~]# mkdir /var/log/mysql
+[root@sh-mysqlforcentos7cs ~]# chown -R mysql:mysql /var/log/mysql
+[root@sh-mysqlforcentos7cs ~]# chmod 777 /var/log/mysql
+```
+
+22. Включаем репликацию, для этого необходимо указать параметры подключения к мастеру с побочного сервера 
+
+```bash
+mysql> CHANGE MASTER TO MASTER_HOST = '158.160.11.51', MASTER_USER = 'slave_user', MASTER_PASSWORD = 'ei7veeChu4bo!', MASTER_LOG_FILE = 'binlog.000002', MASTER_LOG_POS = 157;
+Query OK, 0 rows affected, 8 warnings (0.03 sec)
+
+mysql> start slave;
+Query OK, 0 rows affected, 1 warning (0.02 sec)
+```
+
+
+23. Были проблемы с репликацией, помогла команда на мастере
+
+```bash
+mysql> SET GLOBAL sync_binlog=1;
+```
+
+24. Проверяем работу репликации на побочном сервере 
+
+```bash
+mysql> show slave status \G;
+*************************** 1. row ***************************
+               Slave_IO_State: Waiting for source to send event
+                  Master_Host: 158.160.11.51
+                  Master_User: slave_user
+                  Master_Port: 3306
+                Connect_Retry: 60
+              Master_Log_File: mysql-bin.000002
+          Read_Master_Log_Pos: 157
+               Relay_Log_File: mysql-relay-bin.000004
+                Relay_Log_Pos: 326
+        Relay_Master_Log_File: mysql-bin.000002
+             Slave_IO_Running: Yes
+            Slave_SQL_Running: Yes
+              Replicate_Do_DB:
+          Replicate_Ignore_DB:
+           Replicate_Do_Table:
+       Replicate_Ignore_Table:
+      Replicate_Wild_Do_Table:
+  Replicate_Wild_Ignore_Table:
+                   Last_Errno: 0
+                   Last_Error:
+                 Skip_Counter: 0
+          Exec_Master_Log_Pos: 157
+              Relay_Log_Space: 536
+              Until_Condition: None
+               Until_Log_File:
+                Until_Log_Pos: 0
+           Master_SSL_Allowed: No
+           Master_SSL_CA_File:
+           Master_SSL_CA_Path:
+              Master_SSL_Cert:
+            Master_SSL_Cipher:
+               Master_SSL_Key:
+        Seconds_Behind_Master: 0
+Master_SSL_Verify_Server_Cert: No
+                Last_IO_Errno: 0
+                Last_IO_Error:
+               Last_SQL_Errno: 0
+               Last_SQL_Error:
+  Replicate_Ignore_Server_Ids:
+             Master_Server_Id: 1
+                  Master_UUID: cfb06db9-2e05-11ed-96f8-d00d8a3b575c
+             Master_Info_File: mysql.slave_master_info
+                    SQL_Delay: 0
+          SQL_Remaining_Delay: NULL
+      Slave_SQL_Running_State: Replica has read all relay log; waiting for more updates
+           Master_Retry_Count: 86400
+                  Master_Bind:
+      Last_IO_Error_Timestamp:
+     Last_SQL_Error_Timestamp:
+               Master_SSL_Crl:
+           Master_SSL_Crlpath:
+           Retrieved_Gtid_Set:
+            Executed_Gtid_Set:
+                Auto_Position: 0
+         Replicate_Rewrite_DB:
+                 Channel_Name:
+           Master_TLS_Version:
+       Master_public_key_path:
+        Get_master_public_key: 0
+            Network_Namespace:
+1 row in set, 1 warning (0.00 sec)
+
+ERROR:
+No query specified
 ```
 
 ---
