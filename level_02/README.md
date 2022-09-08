@@ -413,6 +413,10 @@ server {
 
 </details>
 
+2. Схема работы реверс прокси
+
+![img3](img/img3.jpg)
+
 ---
 
 ## Задание 1.4
@@ -814,6 +818,93 @@ ERROR:
 No query specified
 ```
 
+## Возможные проблемы и их решения
+
+1. При тестировании на ВМ мастер в ЯО, ВМ отключилась, сменился внешний ip адрес, что повлекло за собой ряд проблем, некоторые службы не стартовали.  
+
+```bash
+[root@sh-centos7cs2 sid]# systemctl | grep r7-office
+● r7-officeAutoCleanUp.service                                                   loaded failed failed    r7-office AutoCleanUp Service
+  r7-officeBackup.service                                                        loaded active running   Start r7-office Backup Service
+  r7-officeControlPanel.service                                                  loaded active running   ControlPanel Main
+  r7-officeFeed.service                                                          loaded active running   r7-office Feed Service
+  r7-officeIndex.service                                                         loaded active running   Start r7-office Index Service
+● r7-officeJabber.service                                                        loaded failed failed    r7-office Jabber Service
+● r7-officeMailAggregator.service                                                loaded failed failed    r7-office MailAggregator Service
+  r7-officeMailCleaner.service                                                   loaded active running   r7-office MailCleaner Service
+  r7-officeMailImap.service                                                      loaded active running   r7-office MailImap Service
+  r7-officeMailWatchdog.service                                                  loaded active running   r7-office MailImap Service
+  r7-officeNotify.service                                                        loaded active running   r7-office Notify Service
+  r7-officeRadicale.service                                                      loaded active running   r7-office Radicale Service
+  r7-officeSocketIO.service                                                      loaded active running   r7-office SocketIO Service
+  r7-officeSsoAuth.service                                                       loaded active running   r7-office SsoAuth Service
+  r7-officeStorageEncryption.service                                             loaded active running   Start r7-office StorageEncryption Service
+  r7-officeStorageMigrate.service                                                loaded active running   Start r7-office StorageMigrate Service
+  r7-officeTelegram.service                                                      loaded active running   r7-office Telegram Service
+  r7-officeThumb.service                                                         loaded active running   r7-office Thumb Service
+  r7-officeThumbnailBuilder.service                                              loaded active running   r7-office ThumbnailBuilder Service
+  r7-officeUrlShortener.service                                                  loaded active running   r7-office UrlShortener Service
+  r7-officeWebDav.service                                                        loaded active running   r7-office WebDav Service
+```
+
+2. Также ошибки можно было прочитать в логах.  
+
+```bash
+[root@sh-centos7cs2 sid]# journalctl -xe
+..........................................
+Sep 08 18:22:51 sh-centos7cs2.ru-central1.internal mono[7212]: /var/www/r7-office/Services/Jabber/ASC.Xmpp.Server.Launcher.exe: Exception has been thrown by the target of an invocation.
+Sep 08 18:22:51 sh-centos7cs2.ru-central1.internal mono[7212]: /var/www/r7-office/Services/Jabber/ASC.Xmpp.Server.Launcher.exe: Authentication to host '127.0.0.1' for user 'root' using method 'mysql_native_pass
+Sep 08 18:22:51 sh-centos7cs2.ru-central1.internal mono[7212]: /var/www/r7-office/Services/Jabber/ASC.Xmpp.Server.Launcher.exe: Access denied for user 'root'@'localhost' (using password: YES)
+..........................................
+p.Server.Launcher.exe: Exception has been thrown by the target of an invocation.
+p.Server.Launcher.exe: Authentication to host '127.0.0.1' for user 'root' using method 'mysql_native_password' failed with message: Access denied for user 'root'@'localhost' (using password: YES)
+p.Server.Launcher.exe: Access denied for user 'root'@'localhost' (using password: YES)
+ed, code=exited, status=1/FAILURE
+d state.
+Server.service, ignoring: Unit not found.
+```
+
+3. Для восстановления работоспособности не запущенных служб нужно выполнить скрипты.
+
+```bash
+[root@sh-centos7cs2 sid]# cd /usr/bin/
+[root@sh-centos7cs2 bin]# sh communityserver-configure.sh
+[root@sh-centos7cs2 bin]# bash xmppserver-configure.sh
+```
+
+4. Проверить что все компоненты сервера запущены.
+
+```bash
+[root@sh-centos7cs2 bin]# systemctl | grep r7-office
+r7-officeAutoCleanUp.service                                                   loaded active running   r7-office AutoCleanUp Service
+r7-officeBackup.service                                                        loaded active running   Start r7-office Backup Service
+r7-officeControlPanel.service                                                  loaded active running   ControlPanel Main
+r7-officeFeed.service                                                          loaded active running   r7-office Feed Service
+r7-officeIndex.service                                                         loaded active running   Start r7-office Index Service
+r7-officeJabber.service                                                        loaded active running   r7-office Jabber Service
+r7-officeMailAggregator.service                                                loaded active running   r7-office MailAggregator Service
+r7-officeMailCleaner.service                                                   loaded active running   r7-office MailCleaner Service
+r7-officeMailImap.service                                                      loaded active running   r7-office MailImap Service
+r7-officeMailWatchdog.service                                                  loaded active running   r7-office MailImap Service
+r7-officeNotify.service                                                        loaded active running   r7-office Notify Service
+r7-officeRadicale.service                                                      loaded active running   r7-office Radicale Service
+r7-officeSocketIO.service                                                      loaded active running   r7-office SocketIO Service
+r7-officeSsoAuth.service                                                       loaded active running   r7-office SsoAuth Service
+r7-officeStorageEncryption.service                                             loaded active running   Start r7-office StorageEncryption Service
+r7-officeStorageMigrate.service                                                loaded active running   Start r7-office StorageMigrate Service
+r7-officeTelegram.service                                                      loaded active running   r7-office Telegram Service
+r7-officeThumb.service                                                         loaded active running   r7-office Thumb Service
+r7-officeThumbnailBuilder.service                                              loaded active running   r7-office ThumbnailBuilder Service
+r7-officeUrlShortener.service                                                  loaded active running   r7-office UrlShortener Service
+r7-officeWebDav.service                                                        loaded active running   r7-office WebDav Service
+```
+
+5. Запросить сертификат letsencrypt для нового внешнего ip.
+
+```bash
+[root@sh-centos7cs2 bin]# certbot -d kuberwars.online,www.kuberwars.online --force-renewal
+```
+
 ---
 
 ### Ссылки
@@ -823,5 +914,11 @@ No query specified
 3. Ссылка на переход на HTTPS с помощью скрипта: https://support.r7-office.ru/https@support.r7-office.ru/hc/ru/articles/4650840176028/default.html
 4. Пользователь для репликации в mysql https://dev.mysql.com/doc/refman/8.0/en/replication-howto-repuser.html
 
-
 ---
+
+### Дополнительные материалы
+
+1. Один из вариантов архитектуры.
+
+![img4](img/img4.png)
+
